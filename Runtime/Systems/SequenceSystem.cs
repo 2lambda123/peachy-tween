@@ -1,54 +1,85 @@
 using Leopotam.EcsLite;
+using Leopotam.EcsLite.ExtendedFilters;
 using UnityEngine;
 
 namespace PeachyTween {
-  internal class SequenceSystem : IEcsSystem, IEcsInitSystem, IEcsRunSystem {
+  internal class SequenceSystem : IEcsSystem, IEcsPreInitSystem, IEcsRunSystem {
     EcsWorld _world;
     EcsFilter _filter;
 
-    public void Init(EcsSystems systems) {
+    public void PreInit(EcsSystems systems) {
       _world = systems.GetWorld();
       _filter = _world.Filter<SequenceMember>().End();
+    }
+
+    enum State {
+      Before,
+      Active,
+      After
     }
 
     public void Run(EcsSystems systems) {
       var statePool = _world.GetPool<TweenState>();
       var activePool = _world.GetPool<Active>();
+      var completePool = _world.GetPool<Complete>();
+      var memberPool = _world.GetPool<SequenceMember>();
+
+      // TODO: Reorder here.
+
       foreach (var entity in _filter) {
-        ref var member = ref _world.GetComponent<SequenceMember>(entity);
+        ref var member = ref memberPool.Get(entity);
         if (activePool.Has(member.SequenceEntity)) {
-          ref var tweenState = ref statePool.Get(entity);
+          ref var state = ref statePool.Get(entity);
           ref var sequenceState = ref statePool.Get(member.SequenceEntity);
           ref var sequenceActive = ref activePool.Get(member.SequenceEntity);
 
+          // Calculate previous state.
+          var prevState = state.Elapsed switch {
+            var e when e < 0 => State.Before,
+            var e when e > state.Duration => State.After,
+            _ => State.Active,
+          };
+
           // Update tween elapsed time.
           var easedElapse = sequenceActive.Progress * sequenceState.Duration;
-          tweenState.Elapsed = easedElapse - member.StartTime;
+          state.Elapsed = easedElapse;
 
-          // Work out if the tween is complete.
-          var isReversed = _world.HasComponent<Reverse>(member.SequenceEntity);
-          var isComplete = isReversed
-            ? tweenState.Elapsed <= 0
-            : tweenState.Elapsed >= tweenState.Duration;
+          // Calculate next state.
+          var nextState = state.Elapsed switch {
+            var e when e < 0 => State.Before,
+            var e when e > state.Duration => State.After,
+            _ => State.Active,
+          };
 
-          if (isComplete) {
-            if (!_world.HasComponent<Complete>(entity)) {
-              // If we've exceeded duration, but the tween is yet to be marked
-              // complete, activate it so it can be completed.
-              activePool.Add(entity);
+          Debug.Log($"id={entity}, nextState={nextState}");
 
-              // Mark the tween complete.
-              _world.AddComponent<Complete>(entity);
-            }
-          } else {
+          if (nextState == State.Active) {
             // Mark tween incomplete.
-            _world.DelComponent<Complete>(entity);
+            completePool.Del(entity);
 
-            // If the tween is active, mark it active so it will progress.
-            if (tweenState.Elapsed > 0 && tweenState.Elapsed < tweenState.Duration) {
+            // Mark tween active.
+            activePool.Add(entity);
+          } else {
+            // Ensure that tween is activated to do one last update.
+            if (nextState != prevState) {
               activePool.Add(entity);
+            }
+
+            // Work out if the tween is complete.
+            if (!completePool.Has(entity)) {
+              var isReversed = _world.HasComponent<Reverse>(member.SequenceEntity);
+              var isComplete = isReversed
+                ? nextState == State.Before
+                : nextState == State.After;
+
+              if (isComplete) {
+                completePool.Add(entity);
+              }
             }
           }
+
+          // Update tween values.
+          ProgressSystem.ProgressTween(_world, entity);
         }
       }
     }

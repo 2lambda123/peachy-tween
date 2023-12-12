@@ -317,6 +317,10 @@ namespace PeachyTween {
       ref var sequencerState = ref _world.GetComponent<TweenState>(sequenceEntity);
       ref var tweenState = ref _world.GetComponent<TweenState>(tweenEntity);
 
+      // Initialize tween to correct state.
+      // NOTE: Is this actually needed... If so, is it correct if the tween is reversed?
+      tweenState.Elapsed = sequencerState.Elapsed - time;
+
       // Add the sequence member state with specified join time.
       _world.AddComponent(
         tweenEntity,
@@ -375,23 +379,12 @@ namespace PeachyTween {
     }
 #pragma warning restore IDE0051
 
-    static EcsSystems AddProgressSystems(
-      this EcsSystems systems,
-      Func<EcsWorld.Mask> getMask
-    ) => systems
-      .Add(new ProgressSystem(getMask()))
-      .Add(new ReverseSystem(getMask()))
-      .Add(new LoopSystem(getMask()))
-      .Add(new EaseSystem(getMask()));
-
     internal static void InitializeEcs() {
       _world = new ();
       _systems = new EcsSystems(_world, _runState)
-        .Add(new ActivateGroupSystem())
-        .Add(new ElapsedSystem())
-        .AddProgressSystems(() => FilterActive())
+        .Add(new ActivateSystem())
+        .Add(new ProgressSystem())
         .Add(new SequenceSystem())
-        .AddProgressSystems(() => FilterActive().Inc<SequenceMember>())
         .Add(new CallbackSystem<OnUpdate>(FilterActive().End()))
         .Add(ChangeSystemExc<float, ShortestAngle>(Mathf.LerpUnclamped))
         .Add(ChangeSystemInc<float, ShortestAngle>(Mathf.LerpAngle))
